@@ -155,6 +155,10 @@
         <label>Delay between requests (ms)</label>
         <input id="delay" type="number" value="0" min="0" max="5000"/>
       </div>
+      <div style="margin-top:10px">
+        <label>Max Requests <span style="color:#64748b;font-size:11px">(0 = không giới hạn)</span></label>
+        <input id="max-requests" type="number" value="0" min="0" max="100000"/>
+      </div>
     </div>
 
     <div class="cors-warn">
@@ -201,6 +205,29 @@
 </div>
 
 <script>
+// ── LocalStorage persistence ─────────────────────────────────────────────────
+const FIELDS = ['url','method','token','extra-headers','body','concurrency','duration','delay','max-requests'];
+const LS_KEY = 'zoa-tester-config';
+
+function saveConfig() {
+  const data = {};
+  FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) data[id] = el.value;
+  });
+  localStorage.setItem(LS_KEY, JSON.stringify(data));
+}
+
+function loadConfig() {
+  try {
+    const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && data[id] !== undefined) el.value = data[id];
+    });
+  } catch(_) {}
+}
+
 // ── Chart ────────────────────────────────────────────────────────────────────
 const chart = new Chart(document.getElementById('chart').getContext('2d'), {
   type: 'bar',
@@ -228,11 +255,12 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
 });
 
 // ── State ────────────────────────────────────────────────────────────────────
-let allResults  = [];
-let stopSignal  = { stop: false };
-let globalStart = 0;
-let uiTimer     = null;
-let firstRLTime = null;
+let allResults   = [];
+let stopSignal   = { stop: false };
+let globalStart  = 0;
+let uiTimer      = null;
+let firstRLTime  = null;
+let reqCounter   = { count: 0 };   // shared across all workers
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -253,6 +281,9 @@ async function worker(id, cfg) {
   const endAt = globalStart + cfg.duration * 1000;
 
   while (!stopSignal.stop && Date.now() < endAt) {
+    // Check max requests limit
+    if (cfg.maxRequests > 0 && reqCounter.count >= cfg.maxRequests) break;
+    reqCounter.count++;
     const t0 = performance.now();
     const elapsed = (Date.now() - globalStart) / 1000;
     let status = 0, latency = 0, rl = false, errMsg = '';
@@ -363,12 +394,13 @@ async function startTest() {
 
   const cfg = {
     url,
-    method:   document.getElementById('method').value,
+    method:      document.getElementById('method').value,
     headers,
-    body:     document.getElementById('body').value.trim() || null,
-    concurrency: parseInt(document.getElementById('concurrency').value) || 20,
-    duration:    parseInt(document.getElementById('duration').value)    || 30,
-    delay:       parseInt(document.getElementById('delay').value)       || 0,
+    body:        document.getElementById('body').value.trim() || null,
+    concurrency: parseInt(document.getElementById('concurrency').value)   || 20,
+    duration:    parseInt(document.getElementById('duration').value)      || 30,
+    delay:       parseInt(document.getElementById('delay').value)         || 0,
+    maxRequests: parseInt(document.getElementById('max-requests').value)  || 0,
   };
 
   // Reset state
@@ -376,6 +408,7 @@ async function startTest() {
   stopSignal  = { stop: false };
   globalStart = Date.now();
   firstRLTime = null;
+  reqCounter  = { count: 0 };
   document.getElementById('log-body').innerHTML = '';
   document.getElementById('rl-alert').style.display = 'none';
   document.getElementById('s-first-rl').textContent = '—';
@@ -412,6 +445,16 @@ function stopTest() {
   document.getElementById('dot').className = 'dot done';
   document.getElementById('run-label').textContent = 'Stopped';
 }
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadConfig();
+  // Auto-save on any input change
+  FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', saveConfig);
+  });
+});
 
 // ── Export CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
