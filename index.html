@@ -97,6 +97,12 @@
     .tag-429  { background: #7f1d1d; color: #fca5a5; }
     .tag-err  { background: #1c1917; color: #a8a29e; }
     .tag-5xx  { background: #431407; color: #fb923c; }
+    .resp-cell {
+      max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; color: #64748b; cursor: pointer;
+      transition: color .15s;
+    }
+    .resp-cell:hover { color: #e2e8f0; white-space: normal; word-break: break-all; }
     .cors-warn {
       background: #1c1400; border: 1px solid #854d0e; color: #fbbf24;
       border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.6;
@@ -204,7 +210,7 @@
     <div class="log-wrap">
       <table>
         <thead>
-          <tr><th>Time (s)</th><th>#</th><th>Status</th><th>Latency</th><th>Note</th></tr>
+          <tr><th>Time (s)</th><th>#</th><th>Status</th><th>Latency</th><th>Note</th><th>Response</th></tr>
         </thead>
         <tbody id="log-body"></tbody>
       </table>
@@ -297,7 +303,7 @@ async function runTest(cfg) {
 
     const fireAt = performance.now();
     const elapsed = (Date.now() - globalStart) / 1000;
-    let status = 0, latency = 0, rl = false, errMsg = '';
+    let status = 0, latency = 0, rl = false, errMsg = '', responseText = '';
 
     try {
       const resp = await fetch(cfg.url, {
@@ -310,13 +316,17 @@ async function runTest(cfg) {
       const text = await resp.text();
       status = resp.status;
       rl = isRateLimited(status, text);
+      // Pretty-print JSON if possible, else raw text (truncated)
+      try { responseText = JSON.stringify(JSON.parse(text)); }
+      catch(_) { responseText = text; }
+      responseText = responseText.slice(0, 300);
     } catch(e) {
       latency = Math.round(performance.now() - fireAt);
       errMsg = (e.message || 'unknown').slice(0, 80);
       if (errMsg.toLowerCase().includes('fetch')) errMsg = 'CORS / network error';
     }
 
-    allResults.push({ t: parseFloat(elapsed.toFixed(3)), seq: i + 1, status, latency, rate_limited: rl, error: errMsg });
+    allResults.push({ t: parseFloat(elapsed.toFixed(3)), seq: i + 1, status, latency, rate_limited: rl, error: errMsg, response: responseText });
 
     // Wait out the remaining interval so we pace evenly
     const used = performance.now() - fireAt;
@@ -378,9 +388,12 @@ function updateUI(totalTarget) {
     else if (r.status >= 200 && r.status < 300) tag = `<span class="tag tag-2xx">${r.status}</span>`;
     else if (r.status >= 500)                   tag = `<span class="tag tag-5xx">${r.status}</span>`;
     else                                        tag = `<span class="tag tag-err">${r.status || 'err'}</span>`;
+    const respDisplay = r.response
+      ? `<td class="resp-cell" title="${r.response.replace(/"/g,'&quot;')}">${r.response}</td>`
+      : `<td style="color:#334155">—</td>`;
     tr.innerHTML = `<td>${r.t.toFixed(2)}</td><td>#${r.seq}</td><td>${tag}</td>
                     <td>${r.latency > 0 ? r.latency + ' ms' : '—'}</td>
-                    <td style="color:#64748b">${r.error}</td>`;
+                    <td style="color:#64748b">${r.error}</td>${respDisplay}`;
     tbody.prepend(tr);
     while (tbody.children.length > 500) tbody.removeChild(tbody.lastChild);
   }
