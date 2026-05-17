@@ -101,6 +101,13 @@
       background: #1c1400; border: 1px solid #854d0e; color: #fbbf24;
       border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.6;
     }
+    /* Calculated rate hint */
+    .rate-hint {
+      background: #0f1117; border: 1px solid #2d3148; border-radius: 6px;
+      padding: 10px 12px; font-size: 12px; color: #64748b;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .rate-hint span { color: #a78bfa; font-weight: 600; font-size: 14px; }
   </style>
 </head>
 <body>
@@ -128,7 +135,7 @@
       </select>
     </div>
     <div>
-      <label>Access Token <span style="color:#64748b;font-size:11px">(gửi qua header <code style="background:#0f1117;padding:1px 5px;border-radius:3px;color:#a78bfa">access_token</code>)</span></label>
+      <label>Access Token <span style="color:#64748b;font-size:11px">(header <code style="background:#0f1117;padding:1px 5px;border-radius:3px;color:#a78bfa">access_token</code>)</span></label>
       <input id="token" type="password" placeholder="Paste access token..." />
     </div>
     <div>
@@ -139,25 +146,26 @@
       <label>Request Body (JSON)</label>
       <textarea id="body" placeholder='{"recipient": {"user_id": "..."}, ...}'></textarea>
     </div>
+
     <div>
       <p class="section-title">Load Config</p>
       <div class="row2">
         <div>
-          <label>Concurrency</label>
-          <input id="concurrency" type="number" value="20" min="1" max="200"/>
+          <label>Số request</label>
+          <input id="total-requests" type="number" value="100" min="1" max="100000"
+                 oninput="updateRateHint()"/>
         </div>
         <div>
-          <label>Duration (s)</label>
-          <input id="duration" type="number" value="30" min="5" max="300"/>
+          <label>Trong (s)</label>
+          <input id="duration" type="number" value="30" min="1" max="3600"
+                 oninput="updateRateHint()"/>
         </div>
       </div>
-      <div style="margin-top:10px">
-        <label>Delay between requests (ms)</label>
-        <input id="delay" type="number" value="0" min="0" max="5000"/>
-      </div>
-      <div style="margin-top:10px">
-        <label>Max Requests <span style="color:#64748b;font-size:11px">(0 = không giới hạn)</span></label>
-        <input id="max-requests" type="number" value="0" min="0" max="100000"/>
+      <!-- Calculated hint -->
+      <div class="rate-hint" style="margin-top:10px" id="rate-hint">
+        <span id="hint-rps">3.3 req/s</span>
+        <span style="color:#64748b;font-size:12px">·</span>
+        <span style="color:#64748b">mỗi <span id="hint-interval" style="color:#94a3b8">300</span> ms / request</span>
       </div>
     </div>
 
@@ -178,12 +186,12 @@
   <!-- Main -->
   <div class="main">
     <div class="stats-bar">
-      <div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value blue"   id="s-elapsed">0s</div></div>
-      <div class="stat"><div class="stat-label">Total Req</div><div class="stat-value"      id="s-total">0</div></div>
-      <div class="stat"><div class="stat-label">Req/s</div><div class="stat-value purple"   id="s-rps">0</div></div>
-      <div class="stat"><div class="stat-label">Success</div><div class="stat-value green"   id="s-ok">0</div></div>
+      <div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value blue"    id="s-elapsed">0s</div></div>
+      <div class="stat"><div class="stat-label">Sent / Total</div><div class="stat-value"    id="s-total">0</div></div>
+      <div class="stat"><div class="stat-label">Req/s</div><div class="stat-value purple"    id="s-rps">0</div></div>
+      <div class="stat"><div class="stat-label">Success</div><div class="stat-value green"    id="s-ok">0</div></div>
       <div class="stat"><div class="stat-label">Rate Limited</div><div class="stat-value red" id="s-rl">0</div></div>
-      <div class="stat"><div class="stat-label">Errors</div><div class="stat-value yellow"   id="s-err">0</div></div>
+      <div class="stat"><div class="stat-label">Errors</div><div class="stat-value yellow"    id="s-err">0</div></div>
       <div class="stat"><div class="stat-label">First 429 at</div><div class="stat-value red" id="s-first-rl">—</div></div>
     </div>
 
@@ -196,7 +204,7 @@
     <div class="log-wrap">
       <table>
         <thead>
-          <tr><th>Time (s)</th><th>Worker</th><th>Status</th><th>Latency</th><th>Note</th></tr>
+          <tr><th>Time (s)</th><th>#</th><th>Status</th><th>Latency</th><th>Note</th></tr>
         </thead>
         <tbody id="log-body"></tbody>
       </table>
@@ -205,27 +213,30 @@
 </div>
 
 <script>
-// ── LocalStorage persistence ─────────────────────────────────────────────────
-const FIELDS = ['url','method','token','extra-headers','body','concurrency','duration','delay','max-requests'];
-const LS_KEY = 'zoa-tester-config';
+// ── LocalStorage ──────────────────────────────────────────────────────────────
+const FIELDS = ['url','method','token','extra-headers','body','total-requests','duration'];
+const LS_KEY = 'zoa-tester-v2';
 
 function saveConfig() {
   const data = {};
-  FIELDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) data[id] = el.value;
-  });
+  FIELDS.forEach(id => { const el = document.getElementById(id); if (el) data[id] = el.value; });
   localStorage.setItem(LS_KEY, JSON.stringify(data));
 }
-
 function loadConfig() {
   try {
     const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    FIELDS.forEach(id => {
-      const el = document.getElementById(id);
-      if (el && data[id] !== undefined) el.value = data[id];
-    });
+    FIELDS.forEach(id => { const el = document.getElementById(id); if (el && data[id] !== undefined) el.value = data[id]; });
   } catch(_) {}
+}
+
+// ── Rate hint ────────────────────────────────────────────────────────────────
+function updateRateHint() {
+  const total    = parseInt(document.getElementById('total-requests').value) || 1;
+  const duration = parseInt(document.getElementById('duration').value)       || 1;
+  const interval = Math.round((duration * 1000) / total);
+  const rps      = (total / duration).toFixed(1);
+  document.getElementById('hint-rps').textContent      = rps + ' req/s';
+  document.getElementById('hint-interval').textContent = interval + ' ms';
 }
 
 // ── Chart ────────────────────────────────────────────────────────────────────
@@ -255,12 +266,11 @@ const chart = new Chart(document.getElementById('chart').getContext('2d'), {
 });
 
 // ── State ────────────────────────────────────────────────────────────────────
-let allResults   = [];
-let stopSignal   = { stop: false };
-let globalStart  = 0;
-let uiTimer      = null;
-let firstRLTime  = null;
-let reqCounter   = { count: 0 };   // shared across all workers
+let allResults  = [];
+let stopSignal  = { stop: false };
+let globalStart = 0;
+let uiTimer     = null;
+let firstRLTime = null;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -276,15 +286,16 @@ function isRateLimited(status, text) {
   return false;
 }
 
-// ── Worker ───────────────────────────────────────────────────────────────────
-async function worker(id, cfg) {
-  const endAt = globalStart + cfg.duration * 1000;
+// ── Core test loop ────────────────────────────────────────────────────────────
+// Fires `totalRequests` requests spread evenly across `duration` seconds.
+// interval = duration_ms / totalRequests  →  wait the remaining time after each request.
+async function runTest(cfg) {
+  const interval = (cfg.duration * 1000) / cfg.totalRequests;
 
-  while (!stopSignal.stop && Date.now() < endAt) {
-    // Check max requests limit
-    if (cfg.maxRequests > 0 && reqCounter.count >= cfg.maxRequests) break;
-    reqCounter.count++;
-    const t0 = performance.now();
+  for (let i = 0; i < cfg.totalRequests; i++) {
+    if (stopSignal.stop) break;
+
+    const fireAt = performance.now();
     const elapsed = (Date.now() - globalStart) / 1000;
     let status = 0, latency = 0, rl = false, errMsg = '';
 
@@ -295,25 +306,27 @@ async function worker(id, cfg) {
         body:    cfg.body || undefined,
         signal:  AbortSignal.timeout(10000),
       });
-      latency = Math.round(performance.now() - t0);
+      latency = Math.round(performance.now() - fireAt);
       const text = await resp.text();
       status = resp.status;
       rl = isRateLimited(status, text);
     } catch(e) {
-      latency = Math.round(performance.now() - t0);
-      errMsg = e.message?.slice(0, 80) ?? 'unknown';
-      // CORS errors show as TypeError: Failed to fetch
-      if (errMsg.includes('fetch')) errMsg = 'CORS / network error';
+      latency = Math.round(performance.now() - fireAt);
+      errMsg = (e.message || 'unknown').slice(0, 80);
+      if (errMsg.toLowerCase().includes('fetch')) errMsg = 'CORS / network error';
     }
 
-    allResults.push({ t: parseFloat(elapsed.toFixed(3)), status, latency, rate_limited: rl, worker: id, error: errMsg });
+    allResults.push({ t: parseFloat(elapsed.toFixed(3)), seq: i + 1, status, latency, rate_limited: rl, error: errMsg });
 
-    if (cfg.delay > 0) await sleep(cfg.delay);
+    // Wait out the remaining interval so we pace evenly
+    const used = performance.now() - fireAt;
+    const wait = interval - used;
+    if (wait > 0) await sleep(wait);
   }
 }
 
-// ── UI updates ───────────────────────────────────────────────────────────────
-function updateUI() {
+// ── UI ────────────────────────────────────────────────────────────────────────
+function updateUI(totalTarget) {
   const elapsed = (Date.now() - globalStart) / 1000;
   const total   = allResults.length;
   const ok      = allResults.filter(r => !r.rate_limited && r.status >= 200 && r.status < 300).length;
@@ -322,13 +335,12 @@ function updateUI() {
   const rps     = elapsed > 0 ? (total / elapsed).toFixed(1) : 0;
 
   document.getElementById('s-elapsed').textContent = elapsed.toFixed(0) + 's';
-  document.getElementById('s-total').textContent   = total;
+  document.getElementById('s-total').textContent   = `${total} / ${totalTarget}`;
   document.getElementById('s-rps').textContent     = rps;
   document.getElementById('s-ok').textContent      = ok;
   document.getElementById('s-rl').textContent      = rl;
   document.getElementById('s-err').textContent     = err;
 
-  // First rate limit
   if (!firstRLTime) {
     const first = allResults.find(r => r.rate_limited);
     if (first) {
@@ -336,37 +348,37 @@ function updateUI() {
       document.getElementById('s-first-rl').textContent = first.t.toFixed(2) + 's';
       const a = document.getElementById('rl-alert');
       a.style.display = 'block';
-      a.textContent = `⚠ Rate limit first hit at T+${first.t.toFixed(2)}s`;
+      a.textContent = `⚠ Rate limit first hit at T+${first.t.toFixed(2)}s (request #${first.seq})`;
     }
   }
 
-  // Chart buckets
+  // Chart
   const buckets = {};
   for (const r of allResults) {
     const sec = Math.floor(r.t);
     const b = buckets[sec] ??= { ok: 0, rl: 0, err: 0 };
-    if (r.rate_limited)                           b.rl++;
-    else if (r.status >= 200 && r.status < 300)   b.ok++;
-    else                                           b.err++;
+    if (r.rate_limited)                          b.rl++;
+    else if (r.status >= 200 && r.status < 300)  b.ok++;
+    else                                         b.err++;
   }
   const keys = Object.keys(buckets).map(Number).sort((a,b) => a-b);
-  chart.data.labels            = keys.map(k => k + 's');
-  chart.data.datasets[0].data  = keys.map(k => buckets[k].ok);
-  chart.data.datasets[1].data  = keys.map(k => buckets[k].rl);
-  chart.data.datasets[2].data  = keys.map(k => buckets[k].err);
+  chart.data.labels           = keys.map(k => k + 's');
+  chart.data.datasets[0].data = keys.map(k => buckets[k].ok);
+  chart.data.datasets[1].data = keys.map(k => buckets[k].rl);
+  chart.data.datasets[2].data = keys.map(k => buckets[k].err);
   chart.update('none');
 
-  // Log — show latest 5 per tick
+  // Log (latest 5 per tick, most recent on top)
   const recent = allResults.slice(-5);
   const tbody  = document.getElementById('log-body');
   for (const r of recent) {
     const tr = document.createElement('tr');
     let tag;
-    if (r.rate_limited)                          tag = `<span class="tag tag-429">429 RL</span>`;
-    else if (r.status >= 200 && r.status < 300)  tag = `<span class="tag tag-2xx">${r.status}</span>`;
-    else if (r.status >= 500)                    tag = `<span class="tag tag-5xx">${r.status}</span>`;
-    else                                         tag = `<span class="tag tag-err">${r.status || 'err'}</span>`;
-    tr.innerHTML = `<td>${r.t.toFixed(2)}</td><td>#${r.worker}</td><td>${tag}</td>
+    if (r.rate_limited)                         tag = `<span class="tag tag-429">429 RL</span>`;
+    else if (r.status >= 200 && r.status < 300) tag = `<span class="tag tag-2xx">${r.status}</span>`;
+    else if (r.status >= 500)                   tag = `<span class="tag tag-5xx">${r.status}</span>`;
+    else                                        tag = `<span class="tag tag-err">${r.status || 'err'}</span>`;
+    tr.innerHTML = `<td>${r.t.toFixed(2)}</td><td>#${r.seq}</td><td>${tag}</td>
                     <td>${r.latency > 0 ? r.latency + ' ms' : '—'}</td>
                     <td style="color:#64748b">${r.error}</td>`;
     tbody.prepend(tr);
@@ -376,11 +388,9 @@ function updateUI() {
 
 // ── Start / Stop ─────────────────────────────────────────────────────────────
 async function startTest() {
-  // Validate
   const url = document.getElementById('url').value.trim();
   if (!url) { alert('Nhập URL trước!'); return; }
 
-  // Build config
   let headers = {};
   const token = document.getElementById('token').value.trim();
   if (token) headers['access_token'] = token;
@@ -388,86 +398,81 @@ async function startTest() {
     const extra = document.getElementById('extra-headers').value.trim();
     if (extra) Object.assign(headers, JSON.parse(extra));
   } catch(_) { alert('Extra Headers: JSON không hợp lệ'); return; }
-  if (!headers['Content-Type'] && document.getElementById('body').value.trim()) {
+  if (!headers['Content-Type'] && document.getElementById('body').value.trim())
     headers['Content-Type'] = 'application/json';
-  }
+
+  const totalRequests = parseInt(document.getElementById('total-requests').value) || 100;
+  const duration      = parseInt(document.getElementById('duration').value)       || 30;
 
   const cfg = {
     url,
-    method:      document.getElementById('method').value,
+    method:        document.getElementById('method').value,
     headers,
-    body:        document.getElementById('body').value.trim() || null,
-    concurrency: parseInt(document.getElementById('concurrency').value)   || 20,
-    duration:    parseInt(document.getElementById('duration').value)      || 30,
-    delay:       parseInt(document.getElementById('delay').value)         || 0,
-    maxRequests: parseInt(document.getElementById('max-requests').value)  || 0,
+    body:          document.getElementById('body').value.trim() || null,
+    totalRequests,
+    duration,
   };
 
-  // Reset state
+  // Reset
   allResults  = [];
   stopSignal  = { stop: false };
   globalStart = Date.now();
   firstRLTime = null;
-  reqCounter  = { count: 0 };
-  document.getElementById('log-body').innerHTML = '';
-  document.getElementById('rl-alert').style.display = 'none';
-  document.getElementById('s-first-rl').textContent = '—';
+  document.getElementById('log-body').innerHTML        = '';
+  document.getElementById('rl-alert').style.display   = 'none';
+  document.getElementById('s-first-rl').textContent   = '—';
   chart.data.labels = []; chart.data.datasets.forEach(d => d.data = []); chart.update('none');
 
-  // UI
   document.getElementById('btn-start').style.display = 'none';
   document.getElementById('btn-stop').style.display  = 'block';
-  document.getElementById('dot').className = 'dot running';
-  document.getElementById('run-label').textContent = 'Running…';
+  document.getElementById('dot').className           = 'dot running';
+  document.getElementById('run-label').textContent   = 'Running…';
 
-  // Start UI refresh
-  uiTimer = setInterval(updateUI, 500);
+  uiTimer = setInterval(() => updateUI(totalRequests), 500);
 
-  // Launch workers
-  const workers = Array.from({ length: cfg.concurrency }, (_, i) => worker(i, cfg));
-  await Promise.all(workers);
+  await runTest(cfg);
 
-  // Done
   clearInterval(uiTimer);
-  updateUI();
+  updateUI(totalRequests);
   document.getElementById('btn-start').style.display = 'block';
   document.getElementById('btn-stop').style.display  = 'none';
-  document.getElementById('dot').className = 'dot done';
-  document.getElementById('run-label').textContent = 'Done';
+  document.getElementById('dot').className           = 'dot done';
+  document.getElementById('run-label').textContent   = 'Done';
 }
 
 function stopTest() {
   stopSignal.stop = true;
   clearInterval(uiTimer);
-  updateUI();
+  const totalRequests = parseInt(document.getElementById('total-requests').value) || 100;
+  updateUI(totalRequests);
   document.getElementById('btn-start').style.display = 'block';
   document.getElementById('btn-stop').style.display  = 'none';
-  document.getElementById('dot').className = 'dot done';
-  document.getElementById('run-label').textContent = 'Stopped';
+  document.getElementById('dot').className           = 'dot done';
+  document.getElementById('run-label').textContent   = 'Stopped';
 }
-
-// ── Init ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  loadConfig();
-  // Auto-save on any input change
-  FIELDS.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('input', saveConfig);
-  });
-});
 
 // ── Export CSV ───────────────────────────────────────────────────────────────
 function exportCSV() {
   if (!allResults.length) { alert('Chưa có dữ liệu'); return; }
-  const header = 'time_s,worker,status,latency_ms,rate_limited,error\n';
+  const header = 'seq,time_s,status,latency_ms,rate_limited,error\n';
   const rows   = allResults.map(r =>
-    `${r.t},${r.worker},${r.status},${r.latency},${r.rate_limited},"${r.error}"`
+    `${r.seq},${r.t},${r.status},${r.latency},${r.rate_limited},"${r.error}"`
   ).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([header + rows], { type: 'text/csv' }));
   a.download = `rate-limit-${Date.now()}.csv`;
   a.click();
 }
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadConfig();
+  updateRateHint();
+  FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', saveConfig);
+  });
+});
 </script>
 </body>
 </html>
