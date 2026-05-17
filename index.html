@@ -128,7 +128,7 @@
       </select>
     </div>
     <div>
-      <label>Access Token (Bearer)</label>
+      <label>Access Token <span style="color:#64748b;font-size:11px">(gửi qua header <code style="background:#0f1117;padding:1px 5px;border-radius:3px;color:#a78bfa">access_token</code>)</span></label>
       <input id="token" type="password" placeholder="Paste access token..." />
     </div>
     <div>
@@ -352,7 +352,7 @@ async function startTest() {
   // Build config
   let headers = {};
   const token = document.getElementById('token').value.trim();
-  if (token) headers['Authorization'] = 'Bearer ' + token;
+  if (token) headers['access_token'] = token;
   try {
     const extra = document.getElementById('extra-headers').value.trim();
     if (extra) Object.assign(headers, JSON.parse(extra));
