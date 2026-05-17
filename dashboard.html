@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ZOA Rate Limit Tester</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; font-weight: 600; color: #a78bfa; }
+    header span { font-size: 12px; color: #64748b; background: #1e2235; padding: 2px 8px; border-radius: 999px; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 0;
+      height: calc(100vh - 57px);
+    }
+
+    /* ─── Config Panel ─── */
+    .panel {
+      background: #1a1d27;
+      border-right: 1px solid #2d3148;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      color: #64748b;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    label { font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px; }
+
+    input, select, textarea {
+      width: 100%;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 13px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color .15s;
+      font-family: "SF Mono", "Fira Code", monospace;
+    }
+    input:focus, select:focus, textarea:focus { border-color: #6366f1; }
+    textarea { resize: vertical; min-height: 80px; }
+
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn-start { background: #6366f1; color: #fff; }
+    .btn-start:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-stop  { background: #ef4444; color: #fff; }
+    .btn-export { background: #1e2235; color: #a78bfa; border: 1px solid #2d3148; margin-top: 4px; }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; padding: 4px 10px; border-radius: 999px;
+      background: #1e2235;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: #334155; }
+    .dot.running { background: #22c55e; animation: pulse 1s infinite; }
+    .dot.done    { background: #64748b; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ─── Main area ─── */
+    .main {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    /* Stats bar */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      border-bottom: 1px solid #2d3148;
+      background: #1a1d27;
+    }
+    .stat {
+      padding: 14px 16px;
+      border-right: 1px solid #2d3148;
+    }
+    .stat:last-child { border-right: none; }
+    .stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .06em; }
+    .stat-value { font-size: 22px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .green { color: #22c55e; }
+    .red   { color: #ef4444; }
+    .yellow{ color: #f59e0b; }
+    .blue  { color: #60a5fa; }
+    .purple{ color: #a78bfa; }
+
+    /* Chart area */
+    .chart-wrap {
+      flex: 1;
+      padding: 20px;
+      position: relative;
+      min-height: 0;
+    }
+
+    /* Log table */
+    .log-wrap {
+      height: 220px;
+      border-top: 1px solid #2d3148;
+      overflow-y: auto;
+      font-size: 12px;
+      font-family: "SF Mono", "Fira Code", monospace;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      position: sticky; top: 0;
+      background: #1a1d27;
+      padding: 8px 12px;
+      text-align: left;
+      font-size: 11px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      border-bottom: 1px solid #2d3148;
+    }
+    tbody tr { border-bottom: 1px solid #1e2235; }
+    tbody tr:hover { background: #1e2235; }
+    tbody td { padding: 6px 12px; color: #94a3b8; }
+    .tag {
+      display: inline-block; padding: 1px 7px; border-radius: 4px;
+      font-size: 11px; font-weight: 600;
+    }
+    .tag-2xx { background: #14532d; color: #4ade80; }
+    .tag-429 { background: #7f1d1d; color: #fca5a5; }
+    .tag-err { background: #1c1917; color: #a8a29e; }
+    .tag-5xx { background: #431407; color: #fb923c; }
+
+    /* Alert banner */
+    #rl-alert {
+      display: none;
+      background: #7f1d1d;
+      color: #fca5a5;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      border-top: 1px solid #ef4444;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ZOA Rate Limit Tester</h1>
+  <span id="run-badge" class="status-badge"><span class="dot" id="dot"></span><span id="run-label">Idle</span></span>
+</header>
+
+<div class="layout">
+
+  <!-- ─── Config Panel ─── -->
+  <aside class="panel">
+    <div>
+      <p class="section-title">Target API</p>
+      <label>URL</label>
+      <input id="url" type="url" placeholder="https://openapi.zalo.me/v2.0/oa/message" />
+    </div>
+
+    <div>
+      <label>Method</label>
+      <select id="method">
+        <option>POST</option>
+        <option>GET</option>
+        <option>PUT</option>
+        <option>DELETE</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Access Token (Bearer)</label>
+      <input id="token" type="password" placeholder="Paste your access token..." />
+    </div>
+
+    <div>
+      <label>Extra Headers (JSON)</label>
+      <textarea id="extra-headers" placeholder='{"Content-Type": "application/json"}'></textarea>
+    </div>
+
+    <div>
+      <label>Request Body (JSON)</label>
+      <textarea id="body" placeholder='{"recipient": {"user_id": "..."}, ...}'></textarea>
+    </div>
+
+    <div>
+      <p class="section-title">Load Config</p>
+      <div class="row2">
+        <div>
+          <label>Concurrency</label>
+          <input id="concurrency" type="number" value="20" min="1" max="200" />
+        </div>
+        <div>
+          <label>Duration (s)</label>
+          <input id="duration" type="number" value="30" min="5" max="300" />
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label>Delay between requests (ms)</label>
+        <input id="delay" type="number" value="0" min="0" max="5000" />
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+      <button class="btn btn-start" id="btn-start" onclick="startTest()">▶ Start Stress Test</button>
+      <button class="btn btn-stop"  id="btn-stop"  onclick="stopTest()" style="display:none">■ Stop</button>
+      <button class="btn btn-export" onclick="exportCSV()">⬇ Export CSV</button>
+    </div>
+  </aside>
+
+  <!-- ─── Main ─── -->
+  <div class="main">
+
+    <!-- Stats bar -->
+    <div class="stats-bar">
+      <div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value blue"  id="s-elapsed">0s</div></div>
+      <div class="stat"><div class="stat-label">Total Req</div><div class="stat-value"      id="s-total">0</div></div>
+      <div class="stat"><div class="stat-label">Req/s</div><div class="stat-value purple"   id="s-rps">0</div></div>
+      <div class="stat"><div class="stat-label">Success</div><div class="stat-value green"   id="s-ok">0</div></div>
+      <div class="stat"><div class="stat-label">Rate Limited</div><div class="stat-value red" id="s-rl">0</div></div>
+      <div class="stat"><div class="stat-label">Errors</div><div class="stat-value yellow"   id="s-err">0</div></div>
+      <div class="stat"><div class="stat-label">First 429 at</div><div class="stat-value red" id="s-first-rl">—</div></div>
+    </div>
+
+    <!-- Alert -->
+    <div id="rl-alert"></div>
+
+    <!-- Chart -->
+    <div class="chart-wrap">
+      <canvas id="chart"></canvas>
+    </div>
+
+    <!-- Log table -->
+    <div class="log-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time (s)</th><th>Worker</th><th>Status</th><th>Latency</th><th>Note</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Chart setup ──────────────────────────────────────────────────────────────
+const ctx = document.getElementById('chart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'bar',
+  data: {
+    labels: [],
+    datasets: [
+      { label: '2xx OK',       data: [], backgroundColor: '#22c55e88', borderColor: '#22c55e', borderWidth: 1 },
+      { label: 'Rate Limited', data: [], backgroundColor: '#ef444488', borderColor: '#ef4444', borderWidth: 1 },
+      { label: 'Error/Timeout',data: [], backgroundColor: '#f59e0b55', borderColor: '#f59e0b', borderWidth: 1 },
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: {
+      legend: { labels: { color: '#94a3b8', font: { size: 12 } } },
+      tooltip: { mode: 'index', intersect: false }
+    },
+    scales: {
+      x: {
+        stacked: true,
+        ticks: { color: '#64748b', maxTicksLimit: 20 },
+        grid: { color: '#1e2235' },
+        title: { display: true, text: 'Time (s)', color: '#64748b' }
+      },
+      y: {
+        stacked: true,
+        ticks: { color: '#64748b' },
+        grid: { color: '#1e2235' },
+        title: { display: true, text: 'Requests / sec', color: '#64748b' }
+      }
+    }
+  }
+});
+
+// ── State ────────────────────────────────────────────────────────────────────
+let es = null;
+let allResults = [];
+let fetchOffset = 0;
+let pollTimer = null;
+let firstRLTime = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function setRunning(running) {
+  document.getElementById('btn-start').style.display = running ? 'none' : 'block';
+  document.getElementById('btn-stop').style.display  = running ? 'block' : 'none';
+  document.getElementById('btn-start').disabled = running;
+  const dot = document.getElementById('dot');
+  dot.className = 'dot ' + (running ? 'running' : 'done');
+  document.getElementById('run-label').textContent = running ? 'Running…' : 'Done';
+}
+
+function updateChart(buckets) {
+  const keys = Object.keys(buckets).map(Number).sort((a,b)=>a-b);
+  chart.data.labels = keys.map(k => k + 's');
+  chart.data.datasets[0].data = keys.map(k => buckets[k].ok  || 0);
+  chart.data.datasets[1].data = keys.map(k => buckets[k].rl  || 0);
+  chart.data.datasets[2].data = keys.map(k => buckets[k].err || 0);
+  chart.update('none');
+}
+
+function statusTag(r) {
+  if (r.rate_limited) return `<span class="tag tag-429">429 RL</span>`;
+  if (r.status >= 200 && r.status < 300) return `<span class="tag tag-2xx">${r.status}</span>`;
+  if (r.status >= 500) return `<span class="tag tag-5xx">${r.status}</span>`;
+  if (r.status === 0)  return `<span class="tag tag-err">timeout</span>`;
+  return `<span class="tag tag-err">${r.status}</span>`;
+}
+
+function appendLogs(rows) {
+  const tbody = document.getElementById('log-body');
+  rows.slice(-50).forEach(r => {          // show last 50 only per batch
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.t.toFixed(2)}</td>
+      <td>#${r.worker}</td>
+      <td>${statusTag(r)}</td>
+      <td>${r.latency > 0 ? r.latency + ' ms' : '—'}</td>
+      <td style="color:#64748b">${r.error || ''}</td>
+    `;
+    tbody.prepend(tr);
+    // cap at 500 rows
+    while (tbody.children.length > 500) tbody.removeChild(tbody.lastChild);
+  });
+}
+
+// ── SSE handler ──────────────────────────────────────────────────────────────
+function connectSSE() {
+  es = new EventSource('http://localhost:8000/test/stream');
+
+  es.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+
+    if (d.done) { onTestDone(); return; }
+
+    // stats bar
+    document.getElementById('s-elapsed').textContent = d.elapsed + 's';
+    document.getElementById('s-total').textContent   = d.total;
+    document.getElementById('s-rps').textContent     = d.rps;
+
+    if (d.buckets) updateChart(d.buckets);
+    if (!d.running) onTestDone();
+  };
+
+  es.onerror = () => { es.close(); };
+}
+
+// Poll raw results separately for log table + stats
+async function pollResults() {
+  try {
+    const res = await fetch(`http://localhost:8000/test/results?offset=${fetchOffset}`);
+    const json = await res.json();
+    if (json.data.length > 0) {
+      allResults.push(...json.data);
+      fetchOffset += json.data.length;
+      appendLogs(json.data);
+
+      // update counters
+      const ok  = allResults.filter(r => !r.rate_limited && r.status >= 200 && r.status < 300).length;
+      const rl  = allResults.filter(r => r.rate_limited).length;
+      const err = allResults.filter(r => r.status === 0 && !r.rate_limited).length;
+      document.getElementById('s-ok').textContent  = ok;
+      document.getElementById('s-rl').textContent  = rl;
+      document.getElementById('s-err').textContent = err;
+
+      if (!firstRLTime) {
+        const first = allResults.find(r => r.rate_limited);
+        if (first) {
+          firstRLTime = first.t;
+          document.getElementById('s-first-rl').textContent = first.t.toFixed(2) + 's';
+          const alert = document.getElementById('rl-alert');
+          alert.style.display = 'block';
+          alert.textContent = `⚠ Rate limit first hit at T+${first.t.toFixed(2)}s`;
+        }
+      }
+    }
+  } catch(_) {}
+}
+
+function onTestDone() {
+  setRunning(false);
+  if (es) { es.close(); es = null; }
+  clearInterval(pollTimer);
+}
+
+// ── Start / Stop ─────────────────────────────────────────────────────────────
+async function startTest() {
+  // reset UI
+  allResults = [];
+  fetchOffset = 0;
+  firstRLTime = null;
+  document.getElementById('log-body').innerHTML = '';
+  document.getElementById('rl-alert').style.display = 'none';
+  ['s-elapsed','s-total','s-rps','s-ok','s-rl','s-err'].forEach(id => {
+    document.getElementById(id).textContent = '0';
+  });
+  document.getElementById('s-first-rl').textContent = '—';
+  chart.data.labels = [];
+  chart.data.datasets.forEach(d => d.data = []);
+  chart.update('none');
+
+  // build headers
+  let headers = {};
+  const token = document.getElementById('token').value.trim();
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+
+  try {
+    const extra = document.getElementById('extra-headers').value.trim();
+    if (extra) Object.assign(headers, JSON.parse(extra));
+  } catch(e) { alert('Extra headers: invalid JSON'); return; }
+
+  const bodyRaw = document.getElementById('body').value.trim();
+
+  const cfg = {
+    url:         document.getElementById('url').value.trim(),
+    method:      document.getElementById('method').value,
+    headers,
+    body:        bodyRaw || null,
+    concurrency: parseInt(document.getElementById('concurrency').value) || 10,
+    duration_sec:parseInt(document.getElementById('duration').value)    || 30,
+    delay_ms:    parseInt(document.getElementById('delay').value)       || 0,
+  };
+
+  if (!cfg.url) { alert('Please enter a URL'); return; }
+
+  try {
+    const res = await fetch('http://localhost:8000/test/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+    const json = await res.json();
+    if (!json.ok) { alert(json.message); return; }
+  } catch(e) { alert('Cannot connect to backend at localhost:8000\nRun: uvicorn server:app --port 8000'); return; }
+
+  setRunning(true);
+  connectSSE();
+  pollTimer = setInterval(pollResults, 500);
+}
+
+async function stopTest() {
+  await fetch('http://localhost:8000/test/stop', { method: 'POST' }).catch(()=>{});
+  onTestDone();
+}
+
+// ── Export CSV ───────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (!allResults.length) { alert('No data to export'); return; }
+  const header = 'time_s,worker,status,latency_ms,rate_limited,error\n';
+  const rows = allResults.map(r =>
+    `${r.t},${r.worker},${r.status},${r.latency},${r.rate_limited},${r.error || ''}`
+  ).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `rate-limit-test-${Date.now()}.csv`;
+  a.click();
+}
+</script>
+</body>
+</html>
