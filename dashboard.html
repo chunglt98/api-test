@@ -373,7 +373,7 @@ function appendLogs(rows) {
 
 // ── SSE handler ──────────────────────────────────────────────────────────────
 function connectSSE() {
-  es = new EventSource('http://localhost:8000/test/stream');
+  es = new EventSource('/test/stream');
 
   es.onmessage = (e) => {
     const d = JSON.parse(e.data);
@@ -395,7 +395,7 @@ function connectSSE() {
 // Poll raw results separately for log table + stats
 async function pollResults() {
   try {
-    const res = await fetch(`http://localhost:8000/test/results?offset=${fetchOffset}`);
+    const res = await fetch(`/test/results?offset=${fetchOffset}`);
     const json = await res.json();
     if (json.data.length > 0) {
       allResults.push(...json.data);
@@ -471,14 +471,14 @@ async function startTest() {
   if (!cfg.url) { alert('Please enter a URL'); return; }
 
   try {
-    const res = await fetch('http://localhost:8000/test/start', {
+    const res = await fetch('/test/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
     });
     const json = await res.json();
     if (!json.ok) { alert(json.message); return; }
-  } catch(e) { alert('Cannot connect to backend at localhost:8000\nRun: uvicorn server:app --port 8000'); return; }
+  } catch(e) { alert('Cannot connect to backend.\nMake sure uvicorn server:app is running.'); return; }
 
   setRunning(true);
   connectSSE();
@@ -486,7 +486,7 @@ async function startTest() {
 }
 
 async function stopTest() {
-  await fetch('http://localhost:8000/test/stop', { method: 'POST' }).catch(()=>{});
+  await fetch('/test/stop', { method: 'POST' }).catch(()=>{});
   onTestDone();
 }
 
