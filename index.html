@@ -167,6 +167,11 @@
                  oninput="updateRateHint()"/>
         </div>
       </div>
+      <div style="margin-top:10px">
+        <label>Max concurrent <span style="color:#64748b;font-size:11px">(request bay cùng lúc tối đa)</span></label>
+        <input id="max-concurrent" type="number" value="10" min="1" max="100" oninput="updateRateHint()"/>
+      </div>
+
       <!-- Calculated hint -->
       <div class="rate-hint" style="margin-top:10px" id="rate-hint">
         <span id="hint-rps">3.3 req/s</span>
@@ -220,7 +225,7 @@
 
 <script>
 // ── LocalStorage ──────────────────────────────────────────────────────────────
-const FIELDS = ['url','method','token','extra-headers','body','total-requests','duration'];
+const FIELDS = ['url','method','token','extra-headers','body','total-requests','duration','max-concurrent'];
 const LS_KEY = 'zoa-tester-v2';
 
 function saveConfig() {
@@ -292,8 +297,24 @@ function isRateLimited(status, text) {
   return false;
 }
 
+// ── Semaphore ────────────────────────────────────────────────────────────────
+class Semaphore {
+  constructor(limit) { this.limit = limit; this.active = 0; this.queue = []; }
+  acquire() {
+    return new Promise(resolve => {
+      if (this.active < this.limit) { this.active++; resolve(); }
+      else this.queue.push(resolve);
+    });
+  }
+  release() {
+    this.active--;
+    if (this.queue.length) { this.active++; this.queue.shift()(); }
+  }
+}
+
 // ── Single request ────────────────────────────────────────────────────────────
-async function sendRequest(seq, cfg) {
+async function sendRequest(seq, cfg, sem) {
+  await sem.acquire();
   const t0      = performance.now();
   const elapsed = (Date.now() - globalStart) / 1000;
   let status = 0, latency = 0, rl = false, errMsg = '', responseText = '';
@@ -316,6 +337,8 @@ async function sendRequest(seq, cfg) {
     latency = Math.round(performance.now() - t0);
     errMsg = (e.message || 'unknown').slice(0, 80);
     if (errMsg.toLowerCase().includes('fetch')) errMsg = 'CORS / network error';
+  } finally {
+    sem.release();
   }
 
   allResults.push({ t: parseFloat(elapsed.toFixed(3)), seq, status, latency, rate_limited: rl, error: errMsg, response: responseText });
@@ -327,15 +350,16 @@ async function sendRequest(seq, cfg) {
 //   regardless of API latency.
 async function runTest(cfg) {
   const interval = (cfg.duration * 1000) / cfg.totalRequests;
+  const sem      = new Semaphore(cfg.maxConcurrent);
   const inFlight = [];
 
   for (let i = 0; i < cfg.totalRequests; i++) {
     if (stopSignal.stop) break;
 
-    // Fire and collect — do NOT await here
-    inFlight.push(sendRequest(i + 1, cfg));
+    // Fire and collect — do NOT await here (semaphore controls concurrency internally)
+    inFlight.push(sendRequest(i + 1, cfg, sem));
 
-    // Wait interval before firing next shot
+    // Pace: wait interval before firing next
     await sleep(interval);
   }
 
@@ -422,8 +446,9 @@ async function startTest() {
   if (!headers['Content-Type'] && document.getElementById('body').value.trim())
     headers['Content-Type'] = 'application/json';
 
-  const totalRequests = parseInt(document.getElementById('total-requests').value) || 100;
-  const duration      = parseInt(document.getElementById('duration').value)       || 30;
+  const totalRequests = parseInt(document.getElementById('total-requests').value)  || 100;
+  const duration      = parseInt(document.getElementById('duration').value)        || 30;
+  const maxConcurrent = parseInt(document.getElementById('max-concurrent').value)  || 10;
 
   const cfg = {
     url,
@@ -432,6 +457,7 @@ async function startTest() {
     body:          document.getElementById('body').value.trim() || null,
     totalRequests,
     duration,
+    maxConcurrent,
   };
 
   // Reset
