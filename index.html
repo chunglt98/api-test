@@ -286,13 +286,18 @@ let firstRLTime = null;
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+const RATE_LIMIT_CODES = new Set([-32, -216, -201, -209, 216, 201, 209]);
+
 function isRateLimited(status, text) {
   if (status === 429) return true;
   try {
     const d = JSON.parse(text);
     const code = d.error ?? d.error_code ?? 0;
-    if (typeof code === 'number' && [-216,-201,-209,216,201,209].includes(code)) return true;
+    if (typeof code === 'number' && RATE_LIMIT_CODES.has(code)) return true;
     if (typeof code === 'string' && code.toLowerCase().includes('rate')) return true;
+    // ZOA message-based detection
+    const msg = (d.message || '').toLowerCase();
+    if (msg.includes('limit') || msg.includes('rate')) return true;
   } catch(_) {}
   return false;
 }
