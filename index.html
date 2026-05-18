@@ -292,47 +292,55 @@ function isRateLimited(status, text) {
   return false;
 }
 
-// ── Core test loop ────────────────────────────────────────────────────────────
-// Fires `totalRequests` requests spread evenly across `duration` seconds.
-// interval = duration_ms / totalRequests  →  wait the remaining time after each request.
+// ── Single request ────────────────────────────────────────────────────────────
+async function sendRequest(seq, cfg) {
+  const t0      = performance.now();
+  const elapsed = (Date.now() - globalStart) / 1000;
+  let status = 0, latency = 0, rl = false, errMsg = '', responseText = '';
+
+  try {
+    const resp = await fetch(cfg.url, {
+      method:  cfg.method,
+      headers: cfg.headers,
+      body:    cfg.body || undefined,
+      signal:  AbortSignal.timeout(10000),
+    });
+    latency = Math.round(performance.now() - t0);
+    const text = await resp.text();
+    status = resp.status;
+    rl = isRateLimited(status, text);
+    try { responseText = JSON.stringify(JSON.parse(text)); }
+    catch(_) { responseText = text; }
+    responseText = responseText.slice(0, 300);
+  } catch(e) {
+    latency = Math.round(performance.now() - t0);
+    errMsg = (e.message || 'unknown').slice(0, 80);
+    if (errMsg.toLowerCase().includes('fetch')) errMsg = 'CORS / network error';
+  }
+
+  allResults.push({ t: parseFloat(elapsed.toFixed(3)), seq, status, latency, rate_limited: rl, error: errMsg, response: responseText });
+}
+
+// ── Core scheduler ────────────────────────────────────────────────────────────
+// Fires requests at fixed intervals WITHOUT waiting for responses.
+// → multiple requests can be in-flight simultaneously → actual rate = target rate
+//   regardless of API latency.
 async function runTest(cfg) {
   const interval = (cfg.duration * 1000) / cfg.totalRequests;
+  const inFlight = [];
 
   for (let i = 0; i < cfg.totalRequests; i++) {
     if (stopSignal.stop) break;
 
-    const fireAt = performance.now();
-    const elapsed = (Date.now() - globalStart) / 1000;
-    let status = 0, latency = 0, rl = false, errMsg = '', responseText = '';
+    // Fire and collect — do NOT await here
+    inFlight.push(sendRequest(i + 1, cfg));
 
-    try {
-      const resp = await fetch(cfg.url, {
-        method:  cfg.method,
-        headers: cfg.headers,
-        body:    cfg.body || undefined,
-        signal:  AbortSignal.timeout(10000),
-      });
-      latency = Math.round(performance.now() - fireAt);
-      const text = await resp.text();
-      status = resp.status;
-      rl = isRateLimited(status, text);
-      // Pretty-print JSON if possible, else raw text (truncated)
-      try { responseText = JSON.stringify(JSON.parse(text)); }
-      catch(_) { responseText = text; }
-      responseText = responseText.slice(0, 300);
-    } catch(e) {
-      latency = Math.round(performance.now() - fireAt);
-      errMsg = (e.message || 'unknown').slice(0, 80);
-      if (errMsg.toLowerCase().includes('fetch')) errMsg = 'CORS / network error';
-    }
-
-    allResults.push({ t: parseFloat(elapsed.toFixed(3)), seq: i + 1, status, latency, rate_limited: rl, error: errMsg, response: responseText });
-
-    // Wait out the remaining interval so we pace evenly
-    const used = performance.now() - fireAt;
-    const wait = interval - used;
-    if (wait > 0) await sleep(wait);
+    // Wait interval before firing next shot
+    await sleep(interval);
   }
+
+  // Wait for all in-flight responses to come back
+  await Promise.all(inFlight);
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
